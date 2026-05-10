@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//
+// USERS
+//
+model User {
+  id        String   @id @default(cuid())
+  name      String?
+  email     String   @unique
+  role      String   @default("agent")
+
+  // Stripe fields
+  stripeCustomerId   String?   @unique
+  subscriptionStatus String?
+
+  // Trial fields
+  isTrial   Boolean  @default(false)
+  trialEnds DateTime?
+
+  leads     Lead[]
+  workspaces Workspace[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+//
+// LEADS
+//
+model Lead {
+  id          String   @id @default(cuid())
+
+  source      String
+  name        String?
+  contact     String?
+  message     String
+
+  postcode    String?
+  jobType     String?
+
+  status      String   @default("new")
+
+  assignedTo   User?    @relation(fields: [assignedToId], references: [id])
+  assignedToId String?
+
+  job          Job?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+//
+// JOBS
+//
+model Job {
+  id        String   @id @default(cuid())
+
+  lead      Lead     @relation(fields: [leadId], references: [id])
+  leadId    String   @unique
+
+  dateTime  DateTime?
+  notes     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+//
+// WORKSPACES
+//
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+//
+// BOOKINGS
+//
+model Booking {
+  id        String   @id @default(cuid())
+  title     String
+  date      DateTime
+  createdAt DateTime @default(now())
+}
+
+//
+// TRIALS
+//
+model Trial {
+  id        String   @id @default(cuid())
+  startedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+}
