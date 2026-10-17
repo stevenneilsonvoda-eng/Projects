@@ -19,6 +19,7 @@ import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
+import android.text.InputType;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
@@ -49,7 +50,10 @@ public class MainActivity extends Activity {
   private final ExecutorService background=Executors.newSingleThreadExecutor();
   private SharedPreferences prefs;
   private LinearLayout root,rows;
-  private TextView wifiLine,status,summary;
+  private TextView wifiLine,status,summary,dnsStatus;
+  private EditText dnsAddress,dnsUsername,dnsSecret;
+  private LinearLayout dnsList;
+  private final Map<String,java.util.List<String>> domainActivity=new ConcurrentHashMap<>();
   private Button scan;
   private boolean busy=false;
   private final Set<String> online=new HashSet<>();
@@ -97,9 +101,61 @@ public class MainActivity extends Activity {
     TextView note=txt("Router device list: SSID, bands and access points where Vodafone exposes them. DNS website activity requires a separate DNS monitoring service. This app never intercepts traffic.",12,MUTED,false);add(tools,note,12);
     summary=txt("Devices",19,WHITE,true);add(root,summary,20);
     rows=column();add(root,rows,6);
+    drawDnsSettings();
     add(root,txt("Diagnostics show detectable open TCP services, not websites visited. DNS/domain activity needs a separate DNS log source such as AdGuard Home.",13,MUTED,false),12);
     add(root,txt("Only scans your private Wi-Fi subnet. Devices blocking scans may not appear. MAC addresses, other devices' Wi-Fi bands and browsing history cannot reliably be obtained from an Android phone alone.",12,MUTED,false),18);
     setContentView(scroll);
+  }
+
+  void drawDnsSettings(){
+    LinearLayout card=column();card.setPadding(dp(14),dp(12),dp(14),dp(14));
+    card.setBackground(shape(PANEL,14));add(root,card,18);
+    add(card,txt("INTERNET DOMAIN ACTIVITY",14,GREEN,true),0);
+    add(card,txt("Real requests from AdGuard Home DNS logs. Requires a separate DNS monitor on your network. A query can be background activity, not a visited website.",13,MUTED,false),7);
+    dnsAddress=new EditText(this);dnsAddress.setSingleLine(true);dnsAddress.setTextColor(WHITE);dnsAddress.setHintTextColor(MUTED);
+    dnsAddress.setHint("AdGuard URL (LAN IP, port)");dnsAddress.setText(prefs.getString("dns_addr",""));
+    dnsAddress.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);
+    add(card,dnsAddress,10);
+    dnsUsername=new EditText(this);dnsUsername.setSingleLine(true);dnsUsername.setTextColor(WHITE);dnsUsername.setHintTextColor(MUTED);
+    dnsUsername.setHint("AdGuard username");dnsUsername.setText(prefs.getString("dns_username",""));add(card,dnsUsername,5);
+    dnsSecret=new EditText(this);dnsSecret.setSingleLine(true);dnsSecret.setTextColor(WHITE);dnsSecret.setHintTextColor(MUTED);
+    dnsSecret.setHint("Password (never saved)");
+    dnsSecret.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+    add(card,dnsSecret,5);
+    Button load=button("Refresh DNS activity");add(card,load,10);
+    dnsStatus=txt("No DNS log connection. Only local network scan data is available.",13,MUTED,false);
+    add(card,dnsStatus,8);dnsList=column();add(card,dnsList,7);
+    load.setOnClickListener(v->fetchDns());
+    Button clear=button("Clear DNS results");add(card,clear,7);
+    clear.setOnClickListener(v->{domainActivity.clear();dnsList.removeAllViews();dnsStatus.setText("Results cleared.");render();});
+    add(card,txt("Enter only a private local IP, e.g. http://192.168.1.50:3000. HTTP sends login details unencrypted over your LAN; use HTTPS if available. Credentials are not saved. Nothing is sent to external analytics.",12,MUTED,false),12);
+  }
+  void fetchDns(){
+    String endpoint=dnsAddress.getText().toString().trim();
+    String user=dnsUsername.getText().toString().trim();
+    String secret=dnsSecret.getText().toString();
+    prefs.edit().putString("dns_addr",endpoint).putString("dns_username",user).apply();
+    dnsStatus.setText("Reading AdGuard Home query log...");
+    background.execute(()->{
+      try{
+        DnsClient.Result data=DnsClient.read(endpoint,user,secret);
+        runOnUiThread(()->{
+          domainActivity.clear();domainActivity.putAll(data.recent);dnsList.removeAllViews();
+          dnsStatus.setText("Received "+data.requests+" DNS requests from "+data.recent.size()+" device IPs. Showing up to 6 per device.");
+          int shown=0;
+          for(Map.Entry<String,java.util.List<String>> pair:data.recent.entrySet()){
+            if(shown++>=15)break;
+            add(dnsList,txt(pair.getKey(),13,WHITE,true),10);
+            for(String domain:pair.getValue())add(dnsList,txt("• "+domain,12,MUTED,false),2);
+          }
+          if(data.requests==0)add(dnsList,txt("No device-level DNS logs. Devices must send their DNS requests through AdGuard Home.",12,MUTED,false),6);
+          render();
+        });
+      }catch(Exception e){
+        final String message=e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();
+        runOnUiThread(()->dnsStatus.setText("DNS log unavailable: "+message));
+      }
+    });
   }
   String ip4(int n){return (n&255)+"."+((n>>>8)&255)+"."+((n>>>16)&255)+"."+((n>>>24)&255);}
   boolean isPrivate(int[] a){
@@ -214,6 +270,11 @@ public class MainActivity extends Activity {
       if(first>0)add(card,txt("First seen "+DateFormat.getDateInstance().format(new Date(first))+"  ·  Seen on "+prefs.getInt("scans_"+ip,0)+" scans",12,MUTED,false),3);
       String ports=prefs.getString("ports_"+ip,"");
       add(card,txt(ports.isEmpty()?"No open service detected on tested ports":"Services exposed: "+ports,12,MUTED,false),5);
+      java.util.List<String> requests=domainActivity.get(ip);
+      if(requests!=null&&!requests.isEmpty()){
+        add(card,txt("Recent observed DNS requests:",12,GREEN,true),6);
+        for(int i=0;i<Math.min(3,requests.size());i++)add(card,txt("• "+requests.get(i),12,MUTED,false),2);
+      }
       card.setOnClickListener(v->rename(ip));add(rows,card,9);
     }
   }
