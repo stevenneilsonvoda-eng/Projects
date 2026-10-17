@@ -41,6 +41,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class MainActivity extends Activity {
   private static final int BG=Color.rgb(9,17,31), PANEL=Color.rgb(21,36,57),
@@ -52,6 +53,7 @@ public class MainActivity extends Activity {
   private Button scan;
   private boolean busy=false;
   private final Set<String> online=new HashSet<>();
+  private final Map<String,String> openServices=new ConcurrentHashMap<>();
 
   @Override public void onCreate(Bundle b) {
     super.onCreate(b);
@@ -95,6 +97,7 @@ public class MainActivity extends Activity {
     TextView note=txt("Router device list: SSID, bands and access points where Vodafone exposes them. DNS website activity requires a separate DNS monitoring service. This app never intercepts traffic.",12,MUTED,false);add(tools,note,12);
     summary=txt("Devices",19,WHITE,true);add(root,summary,20);
     rows=column();add(root,rows,6);
+    add(root,txt("Diagnostics show detectable open TCP services, not websites visited. DNS/domain activity needs a separate DNS log source such as AdGuard Home.",13,MUTED,false),12);
     add(root,txt("Only scans your private Wi-Fi subnet. Devices blocking scans may not appear. MAC addresses, other devices' Wi-Fi bands and browsing history cannot reliably be obtained from an Android phone alone.",12,MUTED,false),18);
     setContentView(scroll);
   }
@@ -127,7 +130,7 @@ public class MainActivity extends Activity {
       status.setText("Location permission allows Android to identify your own Wi-Fi SSID; scanning works without GPS tracking.");
       return;
     }
-    busy=true;scan.setEnabled(false);online.clear();render();status.setText("Checking nearby addresses...");
+    busy=true;scan.setEnabled(false);online.clear();openServices.clear();render();status.setText("Checking nearby addresses and network services...");
     background.execute(()->{
       try{
         WifiManager w=(WifiManager)getApplicationContext().getSystemService(Context.WIFI_SERVICE);
@@ -141,7 +144,7 @@ public class MainActivity extends Activity {
         Set<String> found=Collections.synchronizedSet(new HashSet<>());
         AtomicInteger finished=new AtomicInteger();
         int own=a[3];
-        int[] ports={80,443,22,53,445,554,8080,8000,631,3389};
+        int[] ports={21,22,53,80,139,443,445,554,631,1883,3389,5000,5900,8009,8080,8123,9100,32400};
         for(int i=1;i<=254;i++){
           final int host=i; if(host==own)continue;
           tasks.add(pool.submit(()->{
@@ -155,22 +158,38 @@ public class MainActivity extends Activity {
         pool.shutdown();
         long now=System.currentTimeMillis();
         SharedPreferences.Editor edit=prefs.edit();
-        for(String ip:found)edit.putLong("last_"+ip,now);
+        for(String ip:found){ if(!prefs.contains("first_"+ip))edit.putLong("first_"+ip,now); edit.putLong("last_"+ip,now); edit.putInt("scans_"+ip,prefs.getInt("scans_"+ip,0)+1); edit.putString("ports_"+ip,openServices.getOrDefault(ip,"")); }
         edit.apply();
         runOnUiThread(()->{
           online.addAll(found);busy=false;scan.setEnabled(true);
-          wifiInfo();status.setText("Scan complete. "+found.size()+" devices responded. Tap a device to name it.");render();
+          wifiInfo();status.setText("Scan complete. "+found.size()+" reachable devices. Tap a device to name it. Detected services may differ from actual use.");render();
         });
       }catch(Exception e){fail("Scan failed: "+e.getClass().getSimpleName());}
     });
   }
   boolean responds(String ip,int[] ports){
-    try{if(InetAddress.getByName(ip).isReachable(130))return true;}catch(Exception ignored){}
+    boolean active=false;
+    ArrayList<String> detected=new ArrayList<>();
+    try { if(InetAddress.getByName(ip).isReachable(130))active=true; }catch(Exception ignored){}
     for(int port:ports){
-      try(Socket s=new Socket()){s.connect(new InetSocketAddress(ip,port),120);return true;}
-      catch(ConnectException e){return true;}
+      try(Socket sock=new Socket()){
+        sock.connect(new InetSocketAddress(ip,port),90);
+        active=true;detected.add(port+" "+serviceName(port));
+      }catch(ConnectException e){active=true;}
       catch(Exception ignored){}
-    }return false;
+    }
+    if(active)openServices.put(ip,android.text.TextUtils.join(", ",detected));
+    return active;
+  }
+  String serviceName(int port){
+    switch(port){
+      case 21:return "FTP";case 22:return "SSH";case 53:return "DNS";case 80:return "HTTP";
+      case 139:return "NetBIOS";case 443:return "HTTPS";case 445:return "SMB file sharing";
+      case 554:return "RTSP stream";case 631:return "IPP print";case 1883:return "MQTT";
+      case 3389:return "Remote Desktop";case 5000:return "web/NAS";case 5900:return "VNC";
+      case 8009:return "Cast";case 8123:return "home automation";case 9100:return "printer";
+      case 32400:return "Plex";default:return "TCP";
+    }
   }
   void fail(String s){runOnUiThread(()->{busy=false;scan.setEnabled(true);status.setText(s);});}
   void render(){
@@ -191,6 +210,10 @@ public class MainActivity extends Activity {
       add(card,txt(ip+"  ·  "+(active?"Responded this scan":"Previously seen"),13,MUTED,false),6);
       long seen=prefs.getLong("last_"+ip,0);
       if(seen>0)add(card,txt("Last detected "+DateFormat.getDateTimeInstance().format(new Date(seen)),12,MUTED,false),3);
+      long first=prefs.getLong("first_"+ip,0);
+      if(first>0)add(card,txt("First seen "+DateFormat.getDateInstance().format(new Date(first))+"  ·  Seen on "+prefs.getInt("scans_"+ip,0)+" scans",12,MUTED,false),3);
+      String ports=prefs.getString("ports_"+ip,"");
+      add(card,txt(ports.isEmpty()?"No open service detected on tested ports":"Services exposed: "+ports,12,MUTED,false),5);
       card.setOnClickListener(v->rename(ip));add(rows,card,9);
     }
   }
