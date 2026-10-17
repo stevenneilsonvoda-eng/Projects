@@ -22,6 +22,7 @@ import android.view.View;
 import android.text.InputType;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -86,6 +87,11 @@ public class MainActivity extends Activity {
   void draw(){
     ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setBackgroundColor(BG);
     root=column();root.setPadding(dp(18),dp(22),dp(18),dp(28));scroll.addView(root);
+    ImageView logo=new ImageView(this);
+    logo.setImageResource(R.drawable.ic_networkwatch);
+    logo.setContentDescription("Network Watch logo");
+    LinearLayout.LayoutParams logoLayout=new LinearLayout.LayoutParams(dp(64),dp(64));
+    root.addView(logo,logoLayout);
     add(root,txt("NETWORK WATCH",13,GREEN,true),0);
     add(root,txt("Your Vodafone network",25,WHITE,true),8);
     wifiLine=txt("Checking Wi-Fi...",14,MUTED,false);add(root,wifiLine,8);
